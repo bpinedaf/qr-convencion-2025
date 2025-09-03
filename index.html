@@ -118,16 +118,19 @@
     const showResult = (message, type = 'ok') => {
       resultDiv.innerText = message;
       resultDiv.className = type;
-      // Mapear tipo → frame + vibración
+      // Mapear tipo → frame + vibración + beep
       if (type === 'ok') {
         setFrameState('frame-ok');
-        navigator.vibrate?.(80);                // breve vibración positiva
+        navigator.vibrate?.(80);
+        beep(); // beep al finalizar proceso OK
       } else if (type === 'warn') {
         setFrameState('frame-warn');
-        navigator.vibrate?.([120, 60, 120]);    // doble pulso
+        navigator.vibrate?.([120, 60, 120]);
+        beep(); // beep también en advertencia
       } else {
         setFrameState('frame-error');
-        navigator.vibrate?.([60, 60, 60, 60, 200]); // patrón de error
+        navigator.vibrate?.([60, 60, 60, 60, 200]);
+        beep(); // beep en error
       }
     };
 
@@ -216,12 +219,11 @@
       if (locked) return;
       if (decodedText === lastText && (now - lastTime) < 1200) return;
       lastText = decodedText; lastTime = now;
-
+    
       locked = true;
-      beep();                       // sonido al detectar QR (ya desbloqueado)
       setFrameState('frame-busy');  // feedback visual inmediato “procesando…”
-      await handleScan(decodedText); // consulta al backend y pinta resultado
-      await pauseScanner();          // detener hasta confirmación del operador
+      await handleScan(decodedText); // aquí adentro se llama showResult() → beep al final
+      await pauseScanner();          
       scanAgainBtn.style.display = 'inline-block';
       scanAgainBtn.focus();
     }
