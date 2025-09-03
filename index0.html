@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Control de Ingreso – Convención 2025</title>
+  <link rel="icon" type="image/ico" href="Logo_Comunidad.ico" />
+  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700&display=swap" rel="stylesheet">
+
+  <style>
+    body {
+      font-family: 'Nunito', sans-serif;
+      background-color: #f9f9fc;
+      color: #333;
+      text-align: center;
+      padding: 20px;
+    }
+    header { margin-bottom: 30px; }
+    header img { width: 120px; margin-bottom: 10px; }
+    h1 { font-size: 1.8rem; color: #444; margin-bottom: 5px; }
+    p.subtitulo { font-size: 1rem; color: #666; margin-top: 0; }
+
+    /* Botón inicial para desbloquear audio/cámara */
+    #start-btn {
+      padding: 12px 20px;
+      font-size: 1.1rem;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      background: #2d6cdf;
+      color: #fff;
+      margin: 20px auto;
+      display: inline-block;
+    }
+    #start-btn:active { transform: scale(0.98); }
+
+    #reader {
+      width: 320px;
+      margin: auto;
+      border: 3px dashed #aaa;
+      border-radius: 14px;
+      background: #fff;
+      padding: 10px;
+      transition: border-color 160ms ease, box-shadow 160ms ease;
+      box-shadow: 0 0 0 0 rgba(0,0,0,0);
+      display: none; /* oculto hasta que se desbloquee audio */
+    }
+    /* Estados del frame */
+    .frame-busy   { border-color: #2d6cdf; box-shadow: 0 0 0 4px rgba(45,108,223,0.15); }
+    .frame-ok     { border-color: #28a745; box-shadow: 0 0 0 4px rgba(40,167,69,0.15); }
+    .frame-warn   { border-color: #ffc107; box-shadow: 0 0 0 4px rgba(255,193,7,0.2); }
+    .frame-error  { border-color: #dc3545; box-shadow: 0 0 0 4px rgba(220,53,69,0.2); }
+
+    #result {
+      margin-top: 20px;
+      font-size: 1.1rem;
+      font-weight: 700;
+      padding: 16px;
+      border-radius: 10px;
+      display: inline-block;
+      max-width: 90%;
+    }
+    .ok    { background-color: #d4edda; color: #155724; }
+    .error { background-color: #f8d7da; color: #721c24; }
+    .warn  { background-color: #fff3cd; color: #856404; }
+
+    #scan-again {
+      margin-top: 14px;
+      padding: 10px 16px;
+      font-size: 1rem;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      background: #2d6cdf;
+      color: #fff;
+      display: none;
+    }
+    #scan-again:active { transform: scale(0.98); }
+
+    footer {
+      margin-top: 40px;
+      font-size: 0.85rem;
+      color: #999;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="Logo_Comunidad.jpg" alt="Logo Comunidad Marta y María">
+    <h1>Control de Ingreso</h1>
+    <p class="subtitulo">Convención 2025 – Fundación Marta y María</p>
+  </header>
+
+  <!-- Botón inicial: una sola pulsación para habilitar audio y cámara -->
+  <button id="start-btn">🎬 Iniciar escáner</button>
+
+  <div id="reader" aria-live="polite"></div>
+  <div id="result" aria-live="assertive"></div>
+  <button id="scan-again">📷 Escanear otro código</button>
+
+  <footer>
+    ♥ Desarrollado con cariño para la Fundación Marta y María ♥
+  </footer>
+
+  <script>
+    // ------------------ Utilidades UI ------------------
+    const readerDiv   = document.getElementById('reader');
+    const resultDiv   = document.getElementById('result');
+    const scanAgainBtn= document.getElementById('scan-again');
+    const startBtn    = document.getElementById('start-btn');
+
+    function setFrameState(stateClass) {
+      readerDiv.classList.remove('frame-busy','frame-ok','frame-warn','frame-error');
+      if (stateClass) readerDiv.classList.add(stateClass);
+    }
+
+    const showResult = (message, type = 'ok') => {
+      resultDiv.innerText = message;
+      resultDiv.className = type;
+      // Mapear tipo → frame + vibración
+      if (type === 'ok') {
+        setFrameState('frame-ok');
+        navigator.vibrate?.(80);                // breve vibración positiva
+      } else if (type === 'warn') {
+        setFrameState('frame-warn');
+        navigator.vibrate?.([120, 60, 120]);    // doble pulso
+      } else {
+        setFrameState('frame-error');
+        navigator.vibrate?.([60, 60, 60, 60, 200]); // patrón de error
+      }
+    };
+
+    // ------------------ Audio (beep) con desbloqueo por gesto ------------------
+    let audioCtx = null;
+    function ensureAudioContext() {
+      if (audioCtx) return audioCtx;
+      try {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      } catch (e) {
+        console.log("AudioContext no disponible:", e);
+      }
+      return audioCtx;
+    }
+
+    function beep(duration = 120, frequency = 880, volume = 0.2) {
+      if (!audioCtx) return; // si no está desbloqueado, no suena
+      const osc  = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      gain.gain.value = volume;
+      osc.frequency.value = frequency;
+      osc.type = 'sine';
+      osc.start();
+      setTimeout(() => { osc.stop(); }, duration);
+    }
+
+    // ------------------ Lógica de escaneo ------------------
+    let scanner;
+    let locked = false;
+    let useStopRestartFallback = false;
+
+    const cameraConfig = { facingMode: "environment" };
+    const scanConfig   = { fps: 10, qrbox: 250 };
+
+    async function startScanner() {
+      if (!scanner) scanner = new Html5Qrcode("reader");
+      locked = false;
+      setFrameState(null);
+      try {
+        await scanner.start(cameraConfig, scanConfig, onScanSuccess, onScanError);
+      } catch (err) {
+        showResult("❌ No se pudo iniciar la cámara. Revisa permisos del navegador.", 'error');
+      }
+    }
+
+    async function pauseScanner() {
+      if (!scanner) return;
+      try {
+        if (typeof scanner.pause === 'function') {
+          scanner.pause(true);
+          useStopRestartFallback = false;
+        } else {
+          await scanner.stop();
+          useStopRestartFallback = true;
+        }
+      } catch (e) {
+        try { await scanner.stop(); useStopRestartFallback = true; } catch (_e) {}
+      }
+    }
+
+    async function resumeScanner() {
+      resultDiv.innerText = '';
+      resultDiv.className = '';
+      scanAgainBtn.style.display = 'none';
+      locked = false;
+      setFrameState(null);
+      try {
+        if (useStopRestartFallback) {
+          await startScanner();
+        } else if (typeof scanner.resume === 'function') {
+          await scanner.resume();
+        } else {
+          await startScanner();
+        }
+      } catch (e) {
+        showResult("❌ No se pudo reanudar la cámara.", 'error');
+      }
+    }
+
+    let lastText = null;
+    let lastTime = 0;
+
+    async function onScanSuccess(decodedText) {
+      const now = Date.now();
+      if (locked) return;
+      if (decodedText === lastText && (now - lastTime) < 1200) return;
+      lastText = decodedText; lastTime = now;
+
+      locked = true;
+      beep();                       // sonido al detectar QR (ya desbloqueado)
+      setFrameState('frame-busy');  // feedback visual inmediato “procesando…”
+      await handleScan(decodedText); // consulta al backend y pinta resultado
+      await pauseScanner();          // detener hasta confirmación del operador
+      scanAgainBtn.style.display = 'inline-block';
+      scanAgainBtn.focus();
+    }
+
+    function onScanError(_msg) { /* silencioso */ }
+
+    // Consulta a Apps Script
+    const handleScan = async (id) => {
+      const url = `https://script.google.com/macros/s/AKfycbwSYjNvXHbAuVa-Cv_cdEtJOf_zgo6ZU2Y3qgIv5H2e24PucyBxcsmYIhuaQE1jckaK/exec?id=${encodeURIComponent(id)}`;
+      try {
+        const response = await fetch(url);
+        const text = await response.text();
+
+        if (text.includes("✅"))      showResult(text, 'ok');
+        else if (text.includes("⚠️")) showResult(text, 'warn');
+        else                          showResult(text, 'error');
+      } catch (e) {
+        showResult("❌ Error al contactar al servidor.", 'error');
+      }
+    };
+
+    scanAgainBtn.addEventListener('click', resumeScanner);
+
+    // ---------- Desbloqueo de audio + arranque del escáner ----------
+    startBtn.addEventListener('click', async () => {
+      const ctx = ensureAudioContext();
+      try { await ctx?.resume(); } catch(_) {}
+      // Ocultar botón y mostrar lector
+      startBtn.style.display = 'none';
+      readerDiv.style.display = 'block';
+      // Arrancar cámara/escáner
+      startScanner();
+    });
+  </script>
+</body>
+</html>
